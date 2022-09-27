@@ -40,89 +40,101 @@ public class ParallelMeshSlicing : MonoBehaviour
         _planeNormal = _planeNormal.normalized;
         _slicePlane = new Plane(_planeNormal, _planeObjPos);
 
-        NativeList<SlicingJobResult> positiveSliced = new NativeList<SlicingJobResult>(_mesh.triangles.Length, Allocator.TempJob);
-        NativeList<SlicingJobResult> negativeSliced = new NativeList<SlicingJobResult>(_mesh.triangles.Length, Allocator.TempJob);
-        NativeList<SlicingJobResult> positiveStay = new NativeList<SlicingJobResult>(_mesh.triangles.Length, Allocator.TempJob);
-        NativeList<SlicingJobResult> negativeStay = new NativeList<SlicingJobResult>(_mesh.triangles.Length, Allocator.TempJob);
+        NativeList<int> positiveTris = new NativeList<int>(_mesh.triangles.Length / 3, Allocator.TempJob);
+        NativeList<int> negativeTris = new NativeList<int>(_mesh.triangles.Length / 3, Allocator.TempJob);
+        NativeList<TrisSliceResult> positiveSlices = new NativeList<TrisSliceResult>(_mesh.triangles.Length, Allocator.TempJob);
+        NativeList<TrisSliceResult> negativeSlices = new NativeList<TrisSliceResult>(_mesh.triangles.Length, Allocator.TempJob);
+
+        NativeArray<Vector3> vertices = new NativeArray<Vector3>(_mesh.vertices, Allocator.TempJob);
+        NativeArray<Vector3> normals = new NativeArray<Vector3>(_mesh.normals, Allocator.TempJob);
+        NativeArray<int> tris = new NativeArray<int>(_mesh.triangles, Allocator.TempJob);
+        NativeArray<Vector2> uvs = new NativeArray<Vector2>(_mesh.uv, Allocator.TempJob);
 
         MeshSlicingJob job = new MeshSlicingJob();
         job.plane = _slicePlane;
-        job.vertices = new NativeArray<Vector3>(_mesh.vertices, Allocator.TempJob);
-        job.normals = new NativeArray<Vector3>(_mesh.normals, Allocator.TempJob);
-        job.triangles = new NativeArray<int>(_mesh.triangles, Allocator.TempJob);
-        job.uvs = new NativeArray<Vector2>(_mesh.uv, Allocator.TempJob);
+        job.vertices = vertices;
+        job.normals = normals;
+        job.triangles = tris;
+        job.uvs = uvs;
 
-        job.positiveStay = positiveStay.AsParallelWriter();
-        job.negativeStay = negativeStay.AsParallelWriter();
-        job.positiveResults = positiveSliced.AsParallelWriter();
-        job.negativeResults = negativeSliced.AsParallelWriter();
+        job.positiveTris = positiveTris.AsParallelWriter();
+        job.negativeTris = negativeTris.AsParallelWriter();
+        job.positiveSlices = positiveSlices.AsParallelWriter();
+        job.negativeSlices = negativeSlices.AsParallelWriter();
+
 
         float startTime = Time.realtimeSinceStartup;
         job.Schedule(_mesh.triangles.Length / 3, 1).Complete();
         Debug.Log($"Slice job took {Time.realtimeSinceStartup - startTime}");
-
-        Debug.Log($"Positive tris {positiveStay.Length} Negative tris {negativeStay.Length}");
-        Debug.Log($"Positive sliced {positiveSliced.Length} Negative sliced {negativeSliced.Length}");
-
-        job.vertices.Dispose();
-        job.normals.Dispose();
-        job.triangles.Dispose();
-        job.uvs.Dispose();
-
-        if (debugDrawMesh)
-        {
-            DebugDrawTris(positiveSliced.ToArray(), Color.green);
-            DebugDrawTris(positiveStay.ToArray(), Color.green);
-            DebugDrawTris(negativeSliced.ToArray(), Color.red);
-            DebugDrawTris(negativeStay.ToArray(), Color.red);
-        }
+        
+        Debug.Log($"Positive tris {positiveTris.Length} Negative tris {negativeTris.Length}");
+        Debug.Log($"Positive sliced {positiveSlices.Length} Negative sliced {negativeSlices.Length}");
 
         MeshSliceConstructionJob posMesh = new MeshSliceConstructionJob();
-        posMesh.stayResults = positiveStay;
-        posMesh.sliceResults = positiveSliced;
-        posMesh.vertices = new NativeList<Vector3>((positiveSliced.Length + positiveStay.Length) * 3, Allocator.TempJob);
-        posMesh.normals = new NativeList<Vector3>((positiveSliced.Length + positiveStay.Length) * 3, Allocator.TempJob);
-        posMesh.tris = new NativeArray<int>((positiveSliced.Length + positiveStay.Length) * 3, Allocator.TempJob);
-        posMesh.uvs = new NativeList<Vector2>((positiveSliced.Length + positiveStay.Length) * 3, Allocator.TempJob);
+        posMesh.resultTris = positiveTris;
+        posMesh.slices = positiveSlices;
 
+        posMesh.inVertices = vertices;
+        posMesh.inNormals = normals;
+        posMesh.inTris = tris;
+        posMesh.inUVs = uvs;
+
+        // Checar capacidades
+        posMesh.outVertices = new NativeList<Vector3>((positiveSlices.Length + positiveTris.Length) * 3, Allocator.TempJob);
+        posMesh.outNormals = new NativeList<Vector3>((positiveSlices.Length + positiveTris.Length) * 3, Allocator.TempJob);
+        posMesh.outTris = new NativeList<int>((positiveSlices.Length + positiveTris.Length) * 3, Allocator.TempJob);
+        posMesh.outUVs = new NativeList<Vector2>((positiveSlices.Length + positiveTris.Length) * 3, Allocator.TempJob);
+        
         MeshSliceConstructionJob negMesh = new MeshSliceConstructionJob();
-        negMesh.stayResults = negativeStay;
-        negMesh.sliceResults = negativeSliced;
-        negMesh.vertices = new NativeList<Vector3>((negativeSliced.Length + negativeStay.Length) * 3, Allocator.TempJob);
-        negMesh.normals = new NativeList<Vector3>((negativeSliced.Length + negativeStay.Length) * 3, Allocator.TempJob);
-        negMesh.tris = new NativeArray<int>((negativeSliced.Length + negativeStay.Length) * 3, Allocator.TempJob);
-        negMesh.uvs = new NativeList<Vector2>((negativeSliced.Length + negativeStay.Length) * 3, Allocator.TempJob);
+        negMesh.resultTris = negativeTris;
+        negMesh.slices = negativeSlices;
+
+        negMesh.inVertices = vertices;
+        negMesh.inNormals = normals;
+        negMesh.inTris = tris;
+        negMesh.inUVs = uvs;
+
+        // Checar capacidades
+        negMesh.outVertices = new NativeList<Vector3>((negativeSlices.Length + negativeTris.Length) * 3, Allocator.TempJob);
+        negMesh.outNormals = new NativeList<Vector3>((negativeSlices.Length + negativeTris.Length) * 3, Allocator.TempJob);
+        negMesh.outTris = new NativeList<int>((negativeSlices.Length + negativeTris.Length) * 3, Allocator.TempJob);
+        negMesh.outUVs = new NativeList<Vector2>((negativeSlices.Length + negativeTris.Length) * 3, Allocator.TempJob);
 
         JobHandle pHandle = posMesh.Schedule();
         JobHandle nHandle = negMesh.Schedule();
-
+        
         pHandle.Complete();
         nHandle.Complete();
-
-        CreateMeshGO(ref posMesh.tris, ref posMesh.vertices, ref posMesh.normals, ref posMesh.uvs, "POSITIVE");
-        CreateMeshGO(ref negMesh.tris, ref negMesh.vertices, ref negMesh.normals, ref negMesh.uvs, "NEGATIVE");
+        
+        CreateMeshGO(ref posMesh.outTris, ref posMesh.outVertices, ref posMesh.outNormals, ref posMesh.outUVs, "POSITIVE");
+        CreateMeshGO(ref negMesh.outTris, ref negMesh.outVertices, ref negMesh.outNormals, ref negMesh.outUVs, "NEGATIVE");
 
         // Disposing of everything
-        positiveSliced.Dispose();
-        negativeSliced.Dispose();
-        positiveStay.Dispose();
-        negativeStay.Dispose();
+        vertices.Dispose();
+        normals.Dispose();
+        tris.Dispose();
+        uvs.Dispose();
 
-        posMesh.vertices.Dispose();
-        posMesh.normals.Dispose();
-        posMesh.tris.Dispose();
-        posMesh.uvs.Dispose();
+        positiveTris.Dispose();
+        negativeTris.Dispose();
+        positiveSlices.Dispose();
+        negativeSlices.Dispose();
 
-        negMesh.vertices.Dispose();
-        negMesh.normals.Dispose();
-        negMesh.tris.Dispose();
-        negMesh.uvs.Dispose();
+        posMesh.outVertices.Dispose();
+        posMesh.outNormals.Dispose();
+        posMesh.outTris.Dispose();
+        posMesh.outUVs.Dispose();
+        negMesh.outVertices.Dispose();
+        negMesh.outNormals.Dispose();
+        negMesh.outTris.Dispose();
+        negMesh.outUVs.Dispose();
     }
 
 
-    private void CreateMeshGO(ref NativeArray<int> tris, ref NativeList<Vector3> vertices, ref NativeList<Vector3> normals, ref NativeList<Vector2> uvs, string name)
+    private void CreateMeshGO(ref NativeList<int> tris, ref NativeList<Vector3> vertices, ref NativeList<Vector3> normals, ref NativeList<Vector2> uvs, string name)
     {
         Mesh mesh = new Mesh();
+
         mesh.vertices = vertices.ToArray();
         mesh.normals = normals.ToArray();
         mesh.triangles = tris.ToArray();

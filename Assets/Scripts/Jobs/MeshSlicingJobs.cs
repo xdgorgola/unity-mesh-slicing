@@ -23,14 +23,19 @@ public struct MeshSlicingJob : IJobParallelFor
     [ReadOnly]
     public Plane plane;
 
+
+    // NEW
     [WriteOnly]
-    public NativeList<SlicingJobResult>.ParallelWriter positiveResults;
+    public NativeList<int>.ParallelWriter positiveTris;
     [WriteOnly]
-    public NativeList<SlicingJobResult>.ParallelWriter negativeResults;
+    public NativeList<int>.ParallelWriter negativeTris;
+
     [WriteOnly]
-    public NativeList<SlicingJobResult>.ParallelWriter positiveStay;
+    public NativeList<TrisSliceResult>.ParallelWriter positiveSlices;
     [WriteOnly]
-    public NativeList<SlicingJobResult>.ParallelWriter negativeStay;
+    public NativeList<TrisSliceResult>.ParallelWriter negativeSlices;
+
+
 
 
     public void Execute(int index)
@@ -77,22 +82,8 @@ public struct MeshSlicingJob : IJobParallelFor
             (int1.intersection is null && int3.intersection is null) ||
             (int2.intersection is null && int3.intersection is null))
         {
-            SlicingJobResult sr = new SlicingJobResult();
-            sr.a = vertices[triangles[i]];
-            sr.b = vertices[triangles[i + 1]];
-            sr.c = vertices[triangles[i + 2]];
-
-            sr.na = normals[triangles[i]];
-            sr.nb = normals[triangles[i + 1]];
-            sr.nc = normals[triangles[i + 2]];
-
-            sr.uva = uvs[triangles[i]];
-            sr.uvb = uvs[triangles[i + 1]];
-            sr.uvc = uvs[triangles[i + 2]];
-
-            sr.positive = plane.GetSide(vertices[triangles[i]]);
-
-            (sr.positive ? positiveStay : negativeStay).AddNoResize(sr);
+            bool isPositive = plane.GetSide(vertices[triangles[i]]);
+            (isPositive ? positiveTris : negativeTris).AddNoResize(i / 3);
             return;
         }
 
@@ -104,117 +95,123 @@ public struct MeshSlicingJob : IJobParallelFor
         Vector2 int2UV;
         Vector2 int3UV;
 
-        SlicingJobResult sr1 = new SlicingJobResult();
-        SlicingJobResult sr2 = new SlicingJobResult();
-        SlicingJobResult sr3 = new SlicingJobResult();
+        TrisSliceResult sr1 = new TrisSliceResult();
+        TrisSliceResult sr2 = new TrisSliceResult();
+        TrisSliceResult sr3 = new TrisSliceResult();
+
         if (int1.intersection is null)
         {
-            sr1.a = int3.intersection.Value; sr1.b = int2.intersection.Value; sr1.c = vertices[triangles[i + 2]];
-            sr2.a = vertices[triangles[i]]; sr2.b = vertices[triangles[i + 1]]; sr2.c = int3.intersection.Value;
-            sr3.a = vertices[triangles[i + 1]]; sr3.b = int2.intersection.Value; sr3.c = int3.intersection.Value;
+            sr1.vaNew = int3.intersection.Value; sr1.vbNew = int2.intersection.Value; sr1.vaOld = triangles[i + 2];
+            sr2.vaOld = triangles[i]; sr2.vbOld = triangles[i + 1]; sr2.vaNew = int3.intersection.Value;
+            sr3.vaOld = triangles[i + 1]; sr3.vaNew = int2.intersection.Value; sr3.vbNew = int3.intersection.Value;
 
-            sr1.positive = !int1.aPositive;
-            sr2.positive = plane.GetSide(sr2.a);
-            sr3.positive = plane.GetSide(sr3.a);
-
-            sr1.isEdge = true;
-            sr1.edgeA = 0;
-            sr1.edgeB = 1;
-
-            sr3.isEdge = true;
-            sr3.edgeA = 1;
-            sr3.edgeB = 2;
+            sr1.first = -1; sr1.second = -2; sr1.third = 0;
+            sr2.first = 0; sr2.second = 1; sr2.third = -1;
+            sr3.first = 0; sr3.second = -1; sr3.third = -2;
 
             int2Normal = Vector3.Lerp(normals[triangles[i + 1]], normals[triangles[i + 2]], int2.interTime);
             int3Normal = Vector3.Lerp(normals[triangles[i + 2]], normals[triangles[i]], int3.interTime);
 
-            sr1.na = int3Normal; sr1.nb = int2Normal; sr1.nc = normals[triangles[i + 2]];
-            sr2.na = normals[triangles[i]]; sr2.nb = normals[triangles[i + 1]]; sr2.nc = int3Normal;
-            sr3.na = normals[triangles[i + 1]]; sr3.nb = int2Normal; sr3.nc = int3Normal;
+            sr1.naNew = int3Normal; sr1.nbNew = int2Normal;
+            sr2.naNew = int3Normal;
+            sr3.naNew = int2Normal; sr3.nbNew = int3Normal;
 
             int2UV = Vector2.Lerp(uvs[triangles[i + 1]], uvs[triangles[i + 2]], int2.interTime);
             int3UV = Vector2.Lerp(uvs[triangles[i + 2]], uvs[triangles[i]], int3.interTime);
 
-            sr1.uva = int3UV; sr1.uvb = int2UV; sr1.uvc = uvs[triangles[i + 2]];
-            sr2.uva = uvs[triangles[i]]; sr2.uvb = uvs[triangles[i + 1]]; sr2.uvc = int3UV;
-            sr3.uva = uvs[triangles[i + 1]]; sr3.uvb = int3UV; sr3.uvc = int3UV;
+            sr1.uvaNew = int3UV; sr1.uvbNew = int2UV;
+            sr2.uvaNew = int3UV;
+            sr3.uvaNew = int2UV; sr3.uvbNew = int3UV;
 
-            (sr1.positive ? positiveResults : negativeResults).AddNoResize(sr1);
-            (sr2.positive ? positiveResults : negativeResults).AddNoResize(sr2);
-            (sr3.positive ? positiveResults : negativeResults).AddNoResize(sr3);
+            (!int1.aPositive ? positiveSlices : negativeSlices).AddNoResize(sr1);
+            (plane.GetSide(vertices[sr2.vaOld]) ? positiveSlices : negativeSlices).AddNoResize(sr2);
+            (plane.GetSide(vertices[sr3.vaOld]) ? positiveSlices : negativeSlices).AddNoResize(sr3);
+
+            //
+            //sr1.isEdge = true;
+            //sr1.edgeA = 0;
+            //sr1.edgeB = 1;
+            //
+            //sr3.isEdge = true;
+            //sr3.edgeA = 1;
+            //sr3.edgeB = 2;
             return;
         }
         else if (int2.intersection is null)
         {
-            sr1.a = int3.intersection.Value; sr1.b = vertices[triangles[i]]; sr1.c = int1.intersection.Value;
-            sr2.a = vertices[triangles[i + 1]]; sr2.b = vertices[triangles[i + 2]]; sr2.c = int1.intersection.Value;
-            sr3.a = vertices[triangles[i + 2]]; sr3.b = int3.intersection.Value; sr3.c = int1.intersection.Value;
+            sr1.vaNew = int3.intersection.Value; sr1.vaOld = triangles[i]; sr1.vbNew = int1.intersection.Value;
+            sr2.vaOld = triangles[i + 1]; sr2.vbOld = triangles[i + 2]; sr2.vaNew = int1.intersection.Value;
+            sr3.vaOld = triangles[i + 2]; sr3.vaNew = int3.intersection.Value; sr3.vbNew = int1.intersection.Value;
 
-            sr1.positive = !int2.aPositive;
-            sr2.positive = plane.GetSide(sr2.a);
-            sr3.positive = plane.GetSide(sr3.a);
-
-            sr1.isEdge = true;
-            sr1.edgeA = 0;
-            sr1.edgeB = 2;
-
-            sr3.isEdge = true;
-            sr3.edgeA = 1;
-            sr3.edgeB = 2;
+            sr1.first = -1; sr1.second = 0; sr1.third = -2;
+            sr2.first = 0; sr2.second = 1; sr2.third = -1;
+            sr3.first = 0; sr3.second = -1; sr3.third = -2;
 
             int1Normal = Vector3.Lerp(normals[triangles[i]], normals[triangles[i + 1]], int1.interTime);
             int3Normal = Vector3.Lerp(normals[triangles[i + 2]], normals[triangles[i]], int3.interTime);
 
-            sr1.na = int3Normal; sr1.nb = normals[triangles[i]]; sr1.nc = int1Normal;
-            sr2.na = normals[triangles[i + 1]]; sr2.nb = normals[triangles[i + 2]]; sr2.nc = int1Normal;
-            sr3.na = normals[triangles[i + 2]]; sr3.nb = int3Normal; sr3.nc = int1Normal;
+            sr1.naNew = int3Normal; sr1.nbNew = int1Normal;
+            sr2.naNew = int1Normal;
+            sr3.naNew = int3Normal; sr3.nbNew = int1Normal;
 
             int1UV = Vector2.Lerp(uvs[triangles[i]], uvs[triangles[i + 1]], int1.interTime);
             int3UV = Vector2.Lerp(uvs[triangles[i + 2]], uvs[triangles[i]], int3.interTime);
 
-            sr1.uva = int3UV; sr1.uvb = uvs[triangles[i]]; sr1.uvc = int1UV;
-            sr2.uva = uvs[triangles[i + 1]]; sr2.uvb = uvs[triangles[i + 2]]; sr2.uvc = int1UV;
-            sr3.uva = uvs[triangles[i + 2]]; sr3.uvb = int3UV; sr3.uvc = int1UV;
+            sr1.uvaNew = int3UV; sr1.uvbNew = int1UV;
+            sr2.uvaNew = int1UV;
+            sr3.uvaNew = int3UV; sr3.uvbNew = int1UV;
 
-            (sr1.positive ? positiveResults : negativeResults).AddNoResize(sr1);
-            (sr2.positive ? positiveResults : negativeResults).AddNoResize(sr2);
-            (sr3.positive ? positiveResults : negativeResults).AddNoResize(sr3);
+            (!int2.aPositive ? positiveSlices : negativeSlices).AddNoResize(sr1);
+            (plane.GetSide(vertices[sr2.vaOld]) ? positiveSlices : negativeSlices).AddNoResize(sr2);
+            (plane.GetSide(vertices[sr3.vaOld]) ? positiveSlices : negativeSlices).AddNoResize(sr3);
+
+            //
+            //sr1.isEdge = true;
+            //sr1.edgeA = 0;
+            //sr1.edgeB = 2;
+            //
+            //sr3.isEdge = true;
+            //sr3.edgeA = 1;
+            //sr3.edgeB = 2;
+            //
+
             return;
         }
 
-        sr1.a = int1.intersection.Value; sr1.b = vertices[triangles[i + 1]]; sr1.c = int2.intersection.Value;
-        sr2.a = vertices[triangles[i + 2]]; sr2.b = vertices[triangles[i]]; sr2.c = int2.intersection.Value;
-        sr3.a = vertices[triangles[i]]; sr3.b = int1.intersection.Value; sr3.c = int2.intersection.Value;
+        sr1.vaNew = int1.intersection.Value; sr1.vaOld = triangles[i + 1]; sr1.vbNew = int2.intersection.Value;
+        sr2.vaOld = triangles[i + 2]; sr2.vbOld = triangles[i]; sr2.vaNew = int2.intersection.Value;
+        sr3.vaOld = triangles[i]; sr3.vaNew = int1.intersection.Value; sr3.vbNew = int2.intersection.Value;
 
-        sr1.positive = !int3.aPositive;
-        sr2.positive = plane.GetSide(sr2.a);
-        sr3.positive = plane.GetSide(sr3.a);
-
-        sr1.isEdge = true;
-        sr1.edgeA = 0;
-        sr1.edgeB = 2;
-
-        sr3.isEdge = true;
-        sr3.edgeA = 1;
-        sr3.edgeB = 2;
+        sr1.first = -1; sr1.second = 0; sr1.third = -2;
+        sr2.first = 0; sr2.second = 1; sr2.third = -1;
+        sr3.first = 0; sr3.second = -1; sr3.third = -2;
 
         int1Normal = Vector3.Lerp(normals[triangles[i]], normals[triangles[i + 1]], int1.interTime);
         int2Normal = Vector3.Lerp(normals[triangles[i + 1]], normals[triangles[i + 2]], int2.interTime);
 
-        sr1.na = int1Normal; sr1.nb = normals[triangles[i + 1]]; sr1.nc = int2Normal;
-        sr2.na = normals[triangles[i + 2]]; sr2.nb = normals[triangles[i]]; sr2.nc = int2Normal;
-        sr3.na = normals[triangles[i]]; sr3.nb = int1Normal; sr3.nc = int2Normal;
+        sr1.naNew = int1Normal; sr1.nbNew = int2Normal;
+        sr2.naNew = int2Normal;
+        sr3.naNew = int1Normal; sr3.nbNew = int2Normal;
 
         int1UV = Vector2.Lerp(uvs[triangles[i]], uvs[triangles[i + 1]], int1.interTime);
         int2UV = Vector2.Lerp(uvs[triangles[i + 1]], uvs[triangles[i + 2]], int2.interTime);
 
-        sr1.uva = int1UV; sr1.uvb = uvs[triangles[i + 1]]; sr1.uvc = int2UV;
-        sr2.uva = uvs[triangles[i + 2]]; sr2.uvb = uvs[triangles[i]]; sr2.uvc = int2UV;
-        sr3.uva = uvs[triangles[i]]; sr3.uvb = int1UV; sr3.uvc = int2UV;
+        sr1.uvaNew = int1UV; sr1.uvbNew = int2UV;
+        sr2.uvaNew = int2UV;
+        sr3.uvaNew = int1UV; sr3.uvbNew = int2UV;
 
-        (sr1.positive ? positiveResults : negativeResults).AddNoResize(sr1);
-        (sr2.positive ? positiveResults : negativeResults).AddNoResize(sr2);
-        (sr3.positive ? positiveResults : negativeResults).AddNoResize(sr3);
+        (!int3.aPositive ? positiveSlices : negativeSlices).AddNoResize(sr1);
+        (plane.GetSide(vertices[sr2.vaOld]) ? positiveSlices : negativeSlices).AddNoResize(sr2);
+        (plane.GetSide(vertices[sr3.vaOld]) ? positiveSlices : negativeSlices).AddNoResize(sr3);
+
+        //
+        //sr1.isEdge = true;
+        //sr1.edgeA = 0;
+        //sr1.edgeB = 2;
+        //
+        //sr3.isEdge = true;
+        //sr3.edgeA = 1;
+        //sr3.edgeB = 2;
     }
 }
 
@@ -241,68 +238,147 @@ public struct SlicingJobResult
 }
 
 
+public struct TrisSliceResult
+{
+    public Vector3 vaNew;
+    public Vector3 vbNew;
+    public int vaOld;
+    public int vbOld;
+
+    public Vector3 naNew;
+    public Vector2 uvaNew;
+
+    public Vector3 nbNew;
+    public Vector2 uvbNew;
+
+    // 1 -> vbOld
+    // 0 -> vaOld
+    // -1 -> vaNew
+    // -2 -> vbNew
+    public int first;
+    public int second;
+    public int third;
+}
+
+
 public struct MeshSliceConstructionJob : IJob
 {
     [ReadOnly]
-    public NativeArray<SlicingJobResult> stayResults;
+    public NativeList<int> resultTris;
     [ReadOnly]
-    public NativeArray<SlicingJobResult> sliceResults;
+    public NativeList<TrisSliceResult> slices;
 
+    [ReadOnly]
+    public NativeArray<Vector3> inVertices;
+    [ReadOnly]
+    public NativeArray<int> inTris;
+    [ReadOnly]
+    public NativeArray<Vector3> inNormals;
+    [ReadOnly]
+    public NativeArray<Vector2> inUVs;
+
+    public NativeList<Vector3> outVertices;
     [WriteOnly]
-    public NativeList<Vector3> vertices;
+    public NativeList<int> outTris; // COULD BE AN ARRAY.
     [WriteOnly]
-    public NativeArray<int> tris;
+    public NativeList<Vector3> outNormals;
     [WriteOnly]
-    public NativeList<Vector3> normals;
-    [WriteOnly]
-    public NativeList<Vector2> uvs;
+    public NativeList<Vector2> outUVs;
 
 
     public void Execute()
     {
-       Dictionary<Vector3, int> verIndices = new Dictionary<Vector3, int>((stayResults.Length + sliceResults.Length) * 3);
+        Dictionary<int, int> indexMap = new Dictionary<int, int>((resultTris.Length + slices.Length) * 3);
+        Dictionary<int, int> sliceMap = new Dictionary<int, int>((resultTris.Length + slices.Length) * 3);
 
-        for (int i = 0; i < stayResults.Length; ++i)
+        for (int i = 0; i < resultTris.Length; ++i)
+            CheckNormalTris(i, indexMap);
+
+        for (int i = 0; i < slices.Length; ++i)
+            CheckSliceTris(i, indexMap, sliceMap);
+    }
+
+
+    private void CheckNormalTris(int trisStart, Dictionary<int, int> indexMap)
+    {
+        int trisIndex = resultTris[trisStart] * 3;
+
+        for (int i = 0; i < 3; ++i)
         {
-            SlicingJobResult tri = stayResults[i];
-            int ind1 = AddVertex(ref tri.a, ref tri.na, ref tri.uva, verIndices);
-            int ind2 = AddVertex(ref tri.b, ref tri.nb, ref tri.uvb, verIndices);
-            int ind3 = AddVertex(ref tri.c, ref tri.nc, ref tri.uvc, verIndices);
+            int curr = inTris[trisIndex + i];
 
-            int init = i * 3;
+            if (indexMap.ContainsKey(curr))
+            {
+                outTris.AddNoResize(indexMap[curr]);
+                continue;
+            }
+
+            indexMap.Add(curr, indexMap.Count);
+            outTris.AddNoResize(indexMap[curr]);
+            outVertices.AddNoResize(inVertices[curr]);
             
-            tris[init] = ind1;
-            tris[init + 1] = ind2;
-            tris[init + 2] = ind3;
-        }
-
-        for (int i = 0; i < sliceResults.Length; ++i)
-        {
-            SlicingJobResult tri = sliceResults[i];
-            int ind1 = AddVertex(ref tri.a, ref tri.na, ref tri.uva, verIndices);
-            int ind2 = AddVertex(ref tri.b, ref tri.nb, ref tri.uvb, verIndices);
-            int ind3 = AddVertex(ref tri.c, ref tri.nc, ref tri.uvc, verIndices);
-
-            int init = (i + stayResults.Length) * 3;
-
-            tris[init] = ind1;
-            tris[init + 1] = ind2;
-            tris[init + 2] = ind3;
+            outNormals.AddNoResize(inNormals[curr]);
+            outUVs.AddNoResize(inUVs[curr]);
         }
     }
 
 
-    private int AddVertex(ref Vector3 vertex, ref Vector3 normal, ref Vector2 uv, Dictionary<Vector3, int> verIndices)
+    private void CheckSliceTris(int sliceIndex, Dictionary<int, int> trisMap, Dictionary<int, int> sliceMap)
     {
-        if (verIndices.ContainsKey(vertex))
-            return verIndices[vertex];
+        TrisSliceResult res = slices[sliceIndex];
+        ProcessSliceVertex(res.first, ref res, trisMap, sliceMap);
+        ProcessSliceVertex(res.second, ref res, trisMap, sliceMap);
+        ProcessSliceVertex(res.third, ref res, trisMap, sliceMap);
+    }
 
-        verIndices.Add(vertex, verIndices.Count);
 
-        vertices.AddNoResize(vertex);
-        normals.AddNoResize(normal);
-        uvs.AddNoResize(uv);
+    // TODO: New vertices realmap
+    private void ProcessSliceVertex(int vertexID, ref TrisSliceResult slice, Dictionary<int, int> normalMap, Dictionary<int, int> sliceMap)
+    {
+        switch (vertexID)
+        {
+            case 1:
+                if (normalMap.ContainsKey(slice.vbOld))
+                {
+                    outTris.AddNoResize(normalMap[slice.vbOld]);
+                    break;
+                }
 
-        return verIndices.Count - 1;
+                normalMap.Add(slice.vbOld, outVertices.Length);
+                outTris.AddNoResize(normalMap[slice.vbOld]);
+                outVertices.AddNoResize(inVertices[slice.vbOld]);
+                outNormals.AddNoResize(inNormals[slice.vbOld]);
+                outUVs.AddNoResize(inUVs[slice.vbOld]);
+                break;
+            case 0:
+                if (normalMap.ContainsKey(slice.vaOld))
+                {
+                    outTris.AddNoResize(normalMap[slice.vaOld]);
+                    break;
+                }
+
+                normalMap.Add(slice.vaOld, outVertices.Length);
+                outTris.AddNoResize(normalMap[slice.vaOld]);
+                outVertices.AddNoResize(inVertices[slice.vaOld]);
+                outNormals.AddNoResize(inNormals[slice.vaOld]);
+                outUVs.AddNoResize(inUVs[slice.vaOld]);
+                break;
+            case -1:
+                //sliceMap.Add(outVertices.Length, outVertices.Length);
+                outTris.AddNoResize(outVertices.Length);
+                outVertices.AddNoResize(slice.vaNew);
+                outNormals.AddNoResize(slice.naNew);
+                outUVs.AddNoResize(slice.uvaNew);
+                break;
+            case -2:
+                //sliceMap.Add(outVertices.Length, outVertices.Length);
+                outTris.AddNoResize(outVertices.Length);
+                outVertices.AddNoResize(slice.vbNew);
+                outNormals.AddNoResize(slice.nbNew);
+                outUVs.AddNoResize(slice.uvbNew);
+                break;
+            default:
+                break;
+        }
     }
 }
